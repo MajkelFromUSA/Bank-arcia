@@ -268,6 +268,10 @@ function getSearchText(entry) {
   );
 }
 
+function getBaseMatchText(entry) {
+  return normalizeText([entry.name, entry.ingredients].join(' '));
+}
+
 function getPreview(entry) {
   const source = entry.ingredients || entry.description;
 
@@ -331,6 +335,7 @@ function App() {
   const [data, setData] = useState(loadData);
   const [query, setQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
+  const [baseFilter, setBaseFilter] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [editingEntry, setEditingEntry] = useState(null);
   const [pendingImport, setPendingImport] = useState(null);
@@ -357,8 +362,16 @@ function App() {
 
   const visibleEntries = useMemo(() => {
     const normalizedQuery = normalizeText(query.trim());
+    const normalizedBase = normalizeText(baseFilter);
 
     return sortedEntries.filter((entry) => {
+      if (normalizedBase) {
+        return (
+          entry.category !== 'Bazy' &&
+          getBaseMatchText(entry).includes(normalizedBase)
+        );
+      }
+
       const matchesCategory =
         !categoryFilter || entry.category === categoryFilter;
       const matchesQuery =
@@ -366,7 +379,7 @@ function App() {
 
       return matchesCategory && matchesQuery;
     });
-  }, [categoryFilter, query, sortedEntries]);
+  }, [baseFilter, categoryFilter, query, sortedEntries]);
 
   const selectedEntry = data.entries.find((entry) => entry.id === selectedId);
 
@@ -388,9 +401,9 @@ function App() {
     setEditingEntry(null);
   }
 
-  function startAdding() {
+  function startAdding(category = EMPTY_FORM.category) {
     setSelectedId('');
-    setEditingEntry({ ...EMPTY_FORM });
+    setEditingEntry({ ...EMPTY_FORM, category });
   }
 
   function startEditing(entry) {
@@ -481,6 +494,9 @@ function App() {
         if (categoryFilter === categoryName) {
           setCategoryFilter('');
         }
+        if (categoryName === 'Bazy') {
+          setBaseFilter('');
+        }
         setSelectedId('');
         showToast(`Kategoria „${categoryName}” wyczyszczona.`);
       },
@@ -501,6 +517,7 @@ function App() {
         setPendingImport(null);
         setQuery('');
         setCategoryFilter('');
+        setBaseFilter('');
         goHome();
         showToast('Baza wyczyszczona. Lodówka świeci pustkami.');
       },
@@ -557,6 +574,7 @@ function App() {
 
     setData(pendingImport);
     setPendingImport(null);
+    setBaseFilter('');
     goHome();
     showToast('Import zakończony. Obecne dane zastąpione.');
   }
@@ -590,8 +608,23 @@ function App() {
     });
 
     setPendingImport(null);
+    setBaseFilter('');
     goHome();
     showToast('Import zakończony. Nowe wpisy dorzucone do banku.');
+  }
+
+  function updateQuery(value) {
+    setQuery(value);
+
+    if (value.trim()) {
+      setBaseFilter('');
+    }
+  }
+
+  function pickBase(entry) {
+    setBaseFilter(entry.name);
+    setCategoryFilter('');
+    setQuery('');
   }
 
   if (editingEntry) {
@@ -659,7 +692,7 @@ function App() {
               id="search"
               type="search"
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => updateQuery(event.target.value)}
               placeholder="Wpisz danie albo składnik, np. makaron, jajka, mozzarella…"
             />
           </label>
@@ -680,9 +713,10 @@ function App() {
                 className={`category-card ${isActive ? 'active' : ''}`}
                 key={category.name}
                 type="button"
-                onClick={() =>
-                  setCategoryFilter(isActive ? '' : category.name)
-                }
+                onClick={() => {
+                  setBaseFilter('');
+                  setCategoryFilter(isActive ? '' : category.name);
+                }}
               >
                 <span>{category.name}</span>
                 <small>{category.description}</small>
@@ -692,16 +726,21 @@ function App() {
           })}
         </section>
 
-        {(query || categoryFilter) && (
+        {(query || categoryFilter || baseFilter) && (
           <div className="active-filter">
             <span>
-              {query ? `Co z tego skleić? „${query}”` : categoryFilter}
+              {baseFilter
+                ? `Dania z bazy: „${baseFilter}”`
+                : query
+                  ? `Co z tego skleić? „${query}”`
+                  : categoryFilter}
             </span>
             <button
               type="button"
               onClick={() => {
                 setQuery('');
                 setCategoryFilter('');
+                setBaseFilter('');
               }}
             >
               Wyczyść
@@ -711,9 +750,18 @@ function App() {
 
         <EntryList
           entries={visibleEntries}
+          mode={
+            baseFilter
+              ? 'baseResults'
+              : categoryFilter === 'Bazy'
+                ? 'bases'
+                : 'entries'
+          }
           query={query}
+          baseFilter={baseFilter}
           hasAnyEntries={data.entries.length > 0}
           onAdd={startAdding}
+          onPickBase={pickBase}
           onOpen={(entry) => setSelectedId(entry.id)}
         />
 
@@ -792,12 +840,24 @@ function ConfirmDialog({ title, message, confirmLabel, onCancel, onConfirm }) {
   );
 }
 
-function EntryList({ entries, query, hasAnyEntries, onAdd, onOpen }) {
+function EntryList({
+  entries,
+  mode,
+  query,
+  baseFilter,
+  hasAnyEntries,
+  onAdd,
+  onPickBase,
+  onOpen,
+}) {
+  const isBasePicker = mode === 'bases';
+  const isBaseResults = mode === 'baseResults';
+
   if (!hasAnyEntries) {
     return (
       <section className="empty-state">
         <h2>Pusto tu jak w lodówce przed zakupami.</h2>
-        <button className="primary-button" type="button" onClick={onAdd}>
+        <button className="primary-button" type="button" onClick={() => onAdd()}>
           Dodaj pierwsze żarcie
         </button>
       </section>
@@ -805,11 +865,39 @@ function EntryList({ entries, query, hasAnyEntries, onAdd, onOpen }) {
   }
 
   if (!entries.length) {
+    if (isBasePicker) {
+      return (
+        <section className="empty-state">
+          <h2>Nie ma jeszcze żadnej bazy.</h2>
+          <p>Dodaj produkt bazowy, a potem będzie z czego kombinować.</p>
+          <button
+            className="primary-button"
+            type="button"
+            onClick={() => onAdd('Bazy')}
+          >
+            Dodaj pierwszą bazę
+          </button>
+        </section>
+      );
+    }
+
+    if (isBaseResults) {
+      return (
+        <section className="empty-state">
+          <h2>Nie znaleziono dań z bazą „{baseFilter}”.</h2>
+          <p>Może pora dopisać coś, co da się z tego sklecić?</p>
+          <button className="primary-button" type="button" onClick={() => onAdd()}>
+            + Dodaj żarcie
+          </button>
+        </section>
+      );
+    }
+
     return (
       <section className="empty-state">
         <h2>Nie znaleziono nic pasującego.</h2>
         <p>Może pora dodać nowe żarcie?</p>
-        <button className="primary-button" type="button" onClick={onAdd}>
+        <button className="primary-button" type="button" onClick={() => onAdd()}>
           + Dodaj żarcie
         </button>
       </section>
@@ -820,7 +908,13 @@ function EntryList({ entries, query, hasAnyEntries, onAdd, onOpen }) {
     <section className="entries-section" aria-labelledby="entries-heading">
       <div className="section-heading">
         <h2 id="entries-heading">
-          {query ? 'Pasujące wpisy' : 'Ostatnio dodane'}
+          {isBasePicker
+            ? 'Wybierz bazę'
+            : isBaseResults
+              ? 'Dania z tej bazy'
+              : query
+                ? 'Pasujące wpisy'
+                : 'Ostatnio dodane'}
         </h2>
         <span>{entries.length}</span>
       </div>
@@ -831,7 +925,7 @@ function EntryList({ entries, query, hasAnyEntries, onAdd, onOpen }) {
             className="entry-card"
             key={entry.id}
             type="button"
-            onClick={() => onOpen(entry)}
+            onClick={() => (isBasePicker ? onPickBase(entry) : onOpen(entry))}
           >
             <span className="entry-category">{entry.category}</span>
             <strong>{entry.name}</strong>
