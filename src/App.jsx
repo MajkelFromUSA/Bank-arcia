@@ -334,6 +334,8 @@ function App() {
   const [selectedId, setSelectedId] = useState('');
   const [editingEntry, setEditingEntry] = useState(null);
   const [pendingImport, setPendingImport] = useState(null);
+  const [confirmDialog, setConfirmDialog] = useState(null);
+  const [categoryToDelete, setCategoryToDelete] = useState(CATEGORY_NAMES[0]);
   const [toast, setToast] = useState('');
   const importInputRef = useRef(null);
 
@@ -371,6 +373,14 @@ function App() {
   function showToast(message) {
     setToast(message);
     window.setTimeout(() => setToast(''), 2800);
+  }
+
+  function askConfirmation(config) {
+    setConfirmDialog(config);
+  }
+
+  function closeConfirmDialog() {
+    setConfirmDialog(null);
   }
 
   function goHome() {
@@ -427,29 +437,74 @@ function App() {
     return true;
   }
 
-  function deleteEntry(entryId) {
-    const ok = window.confirm('Na pewno usunąć to żarcie?');
-
-    if (!ok) {
+  function deleteEntry(entry) {
+    if (!entry) {
       return;
     }
 
-    setData((current) => ({
-      ...current,
-      entries: current.entries.filter((entry) => entry.id !== entryId),
-    }));
-    goHome();
-    showToast('Usunięte. Bez dramatu, ale z lekkim żalem.');
+    askConfirmation({
+      title: 'Usunąć to żarcie?',
+      message: `„${entry.name}” zniknie z bazy. Tego nie da się cofnąć.`,
+      confirmLabel: 'Usuń',
+      onConfirm: () => {
+        setData((current) => ({
+          ...current,
+          entries: current.entries.filter((item) => item.id !== entry.id),
+        }));
+        goHome();
+        showToast('Usunięte. Bez dramatu, ale z lekkim żalem.');
+      },
+    });
   }
 
-  function updatePreference(person, value) {
-    setData((current) => ({
-      ...current,
-      preferences: {
-        ...current.preferences,
-        [person]: value,
+  function deleteCategory(categoryName) {
+    const count = data.entries.filter(
+      (entry) => entry.category === categoryName,
+    ).length;
+
+    if (!count) {
+      showToast('Ta kategoria jest już pusta. Kurz, okruszki i nic więcej.');
+      return;
+    }
+
+    askConfirmation({
+      title: 'Usunąć kategorię?',
+      message: `Usunąć ${count} wpisów z kategorii „${categoryName}”? Sama kategoria zostanie na przyszłość, znikną tylko jej wpisy.`,
+      confirmLabel: 'Usuń kategorię',
+      onConfirm: () => {
+        setData((current) => ({
+          ...current,
+          entries: current.entries.filter(
+            (entry) => entry.category !== categoryName,
+          ),
+        }));
+        if (categoryFilter === categoryName) {
+          setCategoryFilter('');
+        }
+        setSelectedId('');
+        showToast(`Kategoria „${categoryName}” wyczyszczona.`);
       },
-    }));
+    });
+  }
+
+  function deleteAllData() {
+    askConfirmation({
+      title: 'Usunąć całą bazę?',
+      message:
+        'Znikną wszystkie wpisy z Banku Żarcia. Przykładowe dane nie wrócą po odświeżeniu.',
+      confirmLabel: 'Usuń całą bazę',
+      onConfirm: () => {
+        setData({
+          entries: [],
+          preferences: { ...DEFAULT_PREFERENCES },
+        });
+        setPendingImport(null);
+        setQuery('');
+        setCategoryFilter('');
+        goHome();
+        showToast('Baza wyczyszczona. Lodówka świeci pustkami.');
+      },
+    });
   }
 
   function exportData() {
@@ -541,7 +596,11 @@ function App() {
 
   if (editingEntry) {
     return (
-      <Shell toast={toast}>
+      <Shell
+        toast={toast}
+        confirmDialog={confirmDialog}
+        onCloseConfirm={closeConfirmDialog}
+      >
         <EntryForm
           initialEntry={editingEntry}
           onCancel={() => {
@@ -558,20 +617,28 @@ function App() {
 
   if (selectedEntry) {
     return (
-      <Shell toast={toast}>
+      <Shell
+        toast={toast}
+        confirmDialog={confirmDialog}
+        onCloseConfirm={closeConfirmDialog}
+      >
         <EntryDetails
           entry={selectedEntry}
           warnings={getEntryWarnings(selectedEntry, data.preferences)}
           onBack={goHome}
           onEdit={() => startEditing(selectedEntry)}
-          onDelete={() => deleteEntry(selectedEntry.id)}
+          onDelete={() => deleteEntry(selectedEntry)}
         />
       </Shell>
     );
   }
 
   return (
-    <Shell toast={toast}>
+    <Shell
+      toast={toast}
+      confirmDialog={confirmDialog}
+      onCloseConfirm={closeConfirmDialog}
+    >
       <main className="home">
         <section className="hero" aria-labelledby="app-title">
           <div className="brand-row">
@@ -651,11 +718,6 @@ function App() {
         />
 
         <section className="utility-grid">
-          <Preferences
-            preferences={data.preferences}
-            onChange={updatePreference}
-          />
-
           <BackupPanel
             pendingImport={pendingImport}
             importInputRef={importInputRef}
@@ -665,21 +727,67 @@ function App() {
             onMerge={mergeImport}
             onCancelImport={() => setPendingImport(null)}
           />
+
+          <CleanupPanel
+            categoryToDelete={categoryToDelete}
+            onCategoryChange={setCategoryToDelete}
+            onDeleteCategory={() => deleteCategory(categoryToDelete)}
+            onDeleteAllData={deleteAllData}
+          />
         </section>
       </main>
     </Shell>
   );
 }
 
-function Shell({ children, toast }) {
+function Shell({ children, toast, confirmDialog, onCloseConfirm }) {
+  function confirmAndClose() {
+    const action = confirmDialog?.onConfirm;
+    onCloseConfirm();
+    action?.();
+  }
+
   return (
     <div className="app-shell">
       {children}
+      {confirmDialog && (
+        <ConfirmDialog
+          title={confirmDialog.title}
+          message={confirmDialog.message}
+          confirmLabel={confirmDialog.confirmLabel}
+          onCancel={onCloseConfirm}
+          onConfirm={confirmAndClose}
+        />
+      )}
       {toast && (
         <div className="toast" role="status" aria-live="polite">
           {toast}
         </div>
       )}
+    </div>
+  );
+}
+
+function ConfirmDialog({ title, message, confirmLabel, onCancel, onConfirm }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section
+        className="confirm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-title"
+      >
+        <h2 id="confirm-title">{title}</h2>
+        <p>{message}</p>
+        <div className="modal-actions">
+          <button className="ghost-button" type="button" onClick={onCancel}>
+            Anuluj
+          </button>
+          <button className="danger-button" type="button" onClick={onConfirm}>
+            {confirmLabel}
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -882,34 +990,6 @@ function EntryForm({ initialEntry, onSave, onCancel }) {
   );
 }
 
-function Preferences({ preferences, onChange }) {
-  return (
-    <section className="utility-panel" aria-labelledby="preferences-heading">
-      <div className="section-heading">
-        <h2 id="preferences-heading">Preferencje</h2>
-      </div>
-
-      <label>
-        Michał
-        <textarea
-          rows="3"
-          value={preferences.michal}
-          onChange={(event) => onChange('michal', event.target.value)}
-        />
-      </label>
-
-      <label>
-        Blanka
-        <textarea
-          rows="3"
-          value={preferences.blanka}
-          onChange={(event) => onChange('blanka', event.target.value)}
-        />
-      </label>
-    </section>
-  );
-}
-
 function BackupPanel({
   pendingImport,
   importInputRef,
@@ -963,6 +1043,48 @@ function BackupPanel({
           </div>
         </div>
       )}
+    </section>
+  );
+}
+
+function CleanupPanel({
+  categoryToDelete,
+  onCategoryChange,
+  onDeleteCategory,
+  onDeleteAllData,
+}) {
+  return (
+    <section className="utility-panel" aria-labelledby="cleanup-heading">
+      <div className="section-heading">
+        <h2 id="cleanup-heading">Porządki</h2>
+      </div>
+
+      <div className="cleanup-form">
+        <label>
+          Kategoria do wyczyszczenia
+          <select
+            value={categoryToDelete}
+            onChange={(event) => onCategoryChange(event.target.value)}
+          >
+            {CATEGORY_NAMES.map((category) => (
+              <option key={category} value={category}>
+                {category}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <button className="danger-button" type="button" onClick={onDeleteCategory}>
+          Usuń kategorię
+        </button>
+      </div>
+
+      <div className="wipe-zone">
+        <p>Opcja awaryjna, kiedy lodówka mentalna ma zacząć od zera.</p>
+        <button className="danger-button" type="button" onClick={onDeleteAllData}>
+          Usuń całą bazę danych
+        </button>
+      </div>
     </section>
   );
 }
