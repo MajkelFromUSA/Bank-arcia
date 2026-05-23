@@ -19,13 +19,14 @@ const CATEGORIES = [
     name: 'Przekąski do zrobienia',
     description: 'Parę składników, mała akcja i gotowe.',
   },
-  {
-    name: 'Bazy',
-    description: 'Produkty, wokół których często buduje się dania.',
-  },
 ];
 
 const CATEGORY_NAMES = CATEGORIES.map((category) => category.name);
+
+const LARGE_DISH_TYPES = [
+  { value: 'normal', label: 'Duże danie zwykłe' },
+  { value: 'composed', label: 'Duże danie składane' },
+];
 
 const DEFAULT_PREFERENCES = {
   michal:
@@ -54,6 +55,7 @@ const SAMPLE_ENTRIES = [
   {
     name: 'Makaron z serem i sosem',
     category: 'Duże dania',
+    largeDishType: 'normal',
     ingredients: 'makaron, ser, śmietanka, przyprawy, opcjonalnie kurczak',
     description:
       'Ugotować makaron, zrobić prosty sos ze śmietanki i sera, wymieszać.',
@@ -69,10 +71,14 @@ const SAMPLE_ENTRIES = [
     blankaVariant: '',
   },
   {
-    name: 'Makaron',
-    category: 'Bazy',
-    ingredients: 'makaron',
-    description: 'Baza do wielu dań, np. z sosem, serem, kurczakiem, mozzarellą.',
+    name: 'Klasyczny obiad składany',
+    category: 'Duże dania',
+    largeDishType: 'composed',
+    base: 'ziemniaki, ziemniaki pieczone, frytki, talarki',
+    mainAddon: 'jajko sadzone, kotlety, paluszki rybne, wege kotlet',
+    sideAddon: 'mizeria, sałatka z pomidorów i cebuli, ogórek kiszony',
+    ingredients: '',
+    description: 'Prosty obiad do składania z tego, na co akurat jest ochota.',
     michalVariant: '',
     blankaVariant: '',
   },
@@ -81,7 +87,11 @@ const SAMPLE_ENTRIES = [
 const EMPTY_FORM = {
   name: '',
   category: 'Duże dania',
+  largeDishType: 'normal',
   ingredients: '',
+  base: '',
+  mainAddon: '',
+  sideAddon: '',
   description: '',
   michalVariant: '',
   blankaVariant: '',
@@ -120,17 +130,54 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function normalizeLargeDishType(entry) {
+  if (entry.category !== 'Duże dania') {
+    return 'normal';
+  }
+
+  const rawType = normalizeText(entry.largeDishType || entry.bigDishType || '');
+
+  return rawType.includes('composed') || rawType.includes('skladane')
+    ? 'composed'
+    : 'normal';
+}
+
+function isComposedDish(entry) {
+  return entry.category === 'Duże dania' && entry.largeDishType === 'composed';
+}
+
+function cleanEntryForStorage(entry) {
+  const category = CATEGORY_NAMES.includes(entry.category)
+    ? entry.category
+    : 'Duże dania';
+  const largeDishType = normalizeLargeDishType({ ...entry, category });
+  const isComposed = category === 'Duże dania' && largeDishType === 'composed';
+
+  return {
+    name: String(entry.name || '').trim(),
+    category,
+    largeDishType,
+    ingredients: isComposed ? '' : String(entry.ingredients || ''),
+    base: isComposed ? String(entry.base || '') : '',
+    mainAddon: isComposed
+      ? String(entry.mainAddon || entry.mainAddition || '')
+      : '',
+    sideAddon: isComposed
+      ? String(entry.sideAddon || entry.addon || entry.side || '')
+      : '',
+    description: String(entry.description || entry.recipe || ''),
+    michalVariant: String(entry.michalVariant || entry.michal || ''),
+    blankaVariant: String(entry.blankaVariant || entry.blanka || ''),
+  };
+}
+
 function createEntry(entry) {
   const timestamp = nowIso();
+  const cleanedEntry = cleanEntryForStorage(entry);
 
   return {
     id: generateId(),
-    name: entry.name,
-    category: entry.category,
-    ingredients: entry.ingredients || '',
-    description: entry.description || '',
-    michalVariant: entry.michalVariant || '',
-    blankaVariant: entry.blankaVariant || '',
+    ...cleanedEntry,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
@@ -168,7 +215,7 @@ function loadData() {
     }
 
     return {
-      entries: parsed.entries.map(normalizeImportedEntry),
+      entries: parsed.entries.map(normalizeImportedEntry).filter(Boolean),
       preferences: {
         michal:
           typeof parsed.preferences.michal === 'string'
@@ -193,14 +240,20 @@ function normalizeText(value) {
 }
 
 function normalizeImportedEntry(entry) {
+  const rawCategory = String(entry.category || '').trim();
+
+  if (rawCategory === 'Bazy') {
+    return null;
+  }
+
+  const cleanedEntry = cleanEntryForStorage({
+    ...entry,
+    category: rawCategory,
+  });
+
   return {
     id: typeof entry.id === 'string' && entry.id.trim() ? entry.id : generateId(),
-    name: String(entry.name || '').trim(),
-    category: String(entry.category || '').trim(),
-    ingredients: String(entry.ingredients || ''),
-    description: String(entry.description || entry.recipe || ''),
-    michalVariant: String(entry.michalVariant || entry.michal || ''),
-    blankaVariant: String(entry.blankaVariant || entry.blanka || ''),
+    ...cleanedEntry,
     createdAt: entry.createdAt || nowIso(),
     updatedAt: entry.updatedAt || entry.createdAt || nowIso(),
   };
@@ -212,14 +265,24 @@ function validateBackup(rawData) {
   }
 
   const entries = rawData.entries.map((entry) => {
+    const rawCategory = String(entry.category || '').trim();
+
+    if (rawCategory === 'Bazy') {
+      return null;
+    }
+
+    if (!CATEGORY_NAMES.includes(rawCategory)) {
+      throw new Error('Każdy wpis musi mieć nazwę i poprawną kategorię.');
+    }
+
     const normalized = normalizeImportedEntry(entry);
 
-    if (!normalized.name || !CATEGORY_NAMES.includes(normalized.category)) {
+    if (!normalized || !normalized.name) {
       throw new Error('Każdy wpis musi mieć nazwę i poprawną kategorię.');
     }
 
     return normalized;
-  });
+  }).filter(Boolean);
 
   return {
     entries,
@@ -260,7 +323,11 @@ function getSearchText(entry) {
     [
       entry.name,
       entry.category,
+      entry.largeDishType,
       entry.ingredients,
+      entry.base,
+      entry.mainAddon,
+      entry.sideAddon,
       entry.description,
       entry.michalVariant,
       entry.blankaVariant,
@@ -268,11 +335,18 @@ function getSearchText(entry) {
   );
 }
 
-function getBaseMatchText(entry) {
-  return normalizeText([entry.name, entry.ingredients].join(' '));
-}
-
 function getPreview(entry) {
+  if (isComposedDish(entry)) {
+    const pieces = [
+      entry.base ? `Baza: ${entry.base}` : '',
+      entry.mainAddon ? `Główny dodatek: ${entry.mainAddon}` : '',
+      entry.sideAddon ? `Dodatek: ${entry.sideAddon}` : '',
+    ].filter(Boolean);
+    const preview = pieces.join(' | ') || entry.description;
+
+    return preview.length > 130 ? `${preview.slice(0, 130).trim()}...` : preview;
+  }
+
   const source = entry.ingredients || entry.description;
 
   if (!source) {
@@ -280,6 +354,33 @@ function getPreview(entry) {
   }
 
   return source.length > 130 ? `${source.slice(0, 130).trim()}...` : source;
+}
+
+function parseListItems(value) {
+  return String(value || '')
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function buildCombinations(entry) {
+  const groups = [
+    parseListItems(entry.base),
+    parseListItems(entry.mainAddon),
+    parseListItems(entry.sideAddon),
+  ].filter((group) => group.length);
+
+  if (!groups.length) {
+    return [];
+  }
+
+  return groups.reduce(
+    (combinations, group) =>
+      combinations.flatMap((combination) =>
+        group.map((item) => [...combination, item]),
+      ),
+    [[]],
+  ).map((combination) => combination.join(' + '));
 }
 
 function extractPreferenceKeywords(text) {
@@ -305,10 +406,13 @@ function findTermMatches(text, terms) {
 
 function getEntryWarnings(entry, preferences) {
   const warnings = [];
+  const ingredientText = isComposedDish(entry)
+    ? [entry.base, entry.mainAddon, entry.sideAddon].join(' ')
+    : entry.ingredients;
   const disliked = extractPreferenceKeywords(preferences.michal);
-  const michalMatches = findTermMatches(entry.ingredients, disliked);
+  const michalMatches = findTermMatches(ingredientText, disliked);
   const meatMatches = findTermMatches(
-    `${entry.ingredients} ${entry.blankaVariant}`,
+    `${ingredientText} ${entry.blankaVariant}`,
     MEAT_TERMS,
   );
 
@@ -335,7 +439,6 @@ function App() {
   const [data, setData] = useState(loadData);
   const [query, setQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
-  const [baseFilter, setBaseFilter] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [editingEntry, setEditingEntry] = useState(null);
   const [pendingImport, setPendingImport] = useState(null);
@@ -362,16 +465,8 @@ function App() {
 
   const visibleEntries = useMemo(() => {
     const normalizedQuery = normalizeText(query.trim());
-    const normalizedBase = normalizeText(baseFilter);
 
     return sortedEntries.filter((entry) => {
-      if (normalizedBase) {
-        return (
-          entry.category !== 'Bazy' &&
-          getBaseMatchText(entry).includes(normalizedBase)
-        );
-      }
-
       const matchesCategory =
         !categoryFilter || entry.category === categoryFilter;
       const matchesQuery =
@@ -379,7 +474,7 @@ function App() {
 
       return matchesCategory && matchesQuery;
     });
-  }, [baseFilter, categoryFilter, query, sortedEntries]);
+  }, [categoryFilter, query, sortedEntries]);
 
   const selectedEntry = data.entries.find((entry) => entry.id === selectedId);
 
@@ -422,7 +517,7 @@ function App() {
       const timestamp = nowIso();
       const updatedEntry = {
         ...formData,
-        name: trimmedName,
+        ...cleanEntryForStorage({ ...formData, name: trimmedName }),
         updatedAt: timestamp,
       };
 
@@ -494,9 +589,6 @@ function App() {
         if (categoryFilter === categoryName) {
           setCategoryFilter('');
         }
-        if (categoryName === 'Bazy') {
-          setBaseFilter('');
-        }
         setSelectedId('');
         showToast(`Kategoria „${categoryName}” wyczyszczona.`);
       },
@@ -517,7 +609,6 @@ function App() {
         setPendingImport(null);
         setQuery('');
         setCategoryFilter('');
-        setBaseFilter('');
         goHome();
         showToast('Baza wyczyszczona. Lodówka świeci pustkami.');
       },
@@ -574,7 +665,6 @@ function App() {
 
     setData(pendingImport);
     setPendingImport(null);
-    setBaseFilter('');
     goHome();
     showToast('Import zakończony. Obecne dane zastąpione.');
   }
@@ -608,23 +698,8 @@ function App() {
     });
 
     setPendingImport(null);
-    setBaseFilter('');
     goHome();
     showToast('Import zakończony. Nowe wpisy dorzucone do banku.');
-  }
-
-  function updateQuery(value) {
-    setQuery(value);
-
-    if (value.trim()) {
-      setBaseFilter('');
-    }
-  }
-
-  function pickBase(entry) {
-    setBaseFilter(entry.name);
-    setCategoryFilter('');
-    setQuery('');
   }
 
   if (editingEntry) {
@@ -692,11 +767,11 @@ function App() {
               id="search"
               type="search"
               value={query}
-              onChange={(event) => updateQuery(event.target.value)}
+              onChange={(event) => setQuery(event.target.value)}
               placeholder="Wpisz danie albo składnik, np. makaron, jajka, mozzarella…"
             />
           </label>
-          <button className="primary-button" type="button" onClick={startAdding}>
+          <button className="primary-button" type="button" onClick={() => startAdding()}>
             + Dodaj żarcie
           </button>
         </section>
@@ -714,7 +789,6 @@ function App() {
                 key={category.name}
                 type="button"
                 onClick={() => {
-                  setBaseFilter('');
                   setCategoryFilter(isActive ? '' : category.name);
                 }}
               >
@@ -726,21 +800,16 @@ function App() {
           })}
         </section>
 
-        {(query || categoryFilter || baseFilter) && (
+        {(query || categoryFilter) && (
           <div className="active-filter">
             <span>
-              {baseFilter
-                ? `Dania z bazy: „${baseFilter}”`
-                : query
-                  ? `Co z tego skleić? „${query}”`
-                  : categoryFilter}
+              {query ? `Co z tego skleić? „${query}”` : categoryFilter}
             </span>
             <button
               type="button"
               onClick={() => {
                 setQuery('');
                 setCategoryFilter('');
-                setBaseFilter('');
               }}
             >
               Wyczyść
@@ -750,18 +819,9 @@ function App() {
 
         <EntryList
           entries={visibleEntries}
-          mode={
-            baseFilter
-              ? 'baseResults'
-              : categoryFilter === 'Bazy'
-                ? 'bases'
-                : 'entries'
-          }
           query={query}
-          baseFilter={baseFilter}
           hasAnyEntries={data.entries.length > 0}
           onAdd={startAdding}
-          onPickBase={pickBase}
           onOpen={(entry) => setSelectedId(entry.id)}
         />
 
@@ -842,17 +902,11 @@ function ConfirmDialog({ title, message, confirmLabel, onCancel, onConfirm }) {
 
 function EntryList({
   entries,
-  mode,
   query,
-  baseFilter,
   hasAnyEntries,
   onAdd,
-  onPickBase,
   onOpen,
 }) {
-  const isBasePicker = mode === 'bases';
-  const isBaseResults = mode === 'baseResults';
-
   if (!hasAnyEntries) {
     return (
       <section className="empty-state">
@@ -865,34 +919,6 @@ function EntryList({
   }
 
   if (!entries.length) {
-    if (isBasePicker) {
-      return (
-        <section className="empty-state">
-          <h2>Nie ma jeszcze żadnej bazy.</h2>
-          <p>Dodaj produkt bazowy, a potem będzie z czego kombinować.</p>
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => onAdd('Bazy')}
-          >
-            Dodaj pierwszą bazę
-          </button>
-        </section>
-      );
-    }
-
-    if (isBaseResults) {
-      return (
-        <section className="empty-state">
-          <h2>Nie znaleziono dań z bazą „{baseFilter}”.</h2>
-          <p>Może pora dopisać coś, co da się z tego sklecić?</p>
-          <button className="primary-button" type="button" onClick={() => onAdd()}>
-            + Dodaj żarcie
-          </button>
-        </section>
-      );
-    }
-
     return (
       <section className="empty-state">
         <h2>Nie znaleziono nic pasującego.</h2>
@@ -908,13 +934,7 @@ function EntryList({
     <section className="entries-section" aria-labelledby="entries-heading">
       <div className="section-heading">
         <h2 id="entries-heading">
-          {isBasePicker
-            ? 'Wybierz bazę'
-            : isBaseResults
-              ? 'Dania z tej bazy'
-              : query
-                ? 'Pasujące wpisy'
-                : 'Ostatnio dodane'}
+          {query ? 'Pasujące wpisy' : 'Ostatnio dodane'}
         </h2>
         <span>{entries.length}</span>
       </div>
@@ -925,7 +945,7 @@ function EntryList({
             className="entry-card"
             key={entry.id}
             type="button"
-            onClick={() => (isBasePicker ? onPickBase(entry) : onOpen(entry))}
+            onClick={() => onOpen(entry)}
           >
             <span className="entry-category">{entry.category}</span>
             <strong>{entry.name}</strong>
@@ -938,6 +958,23 @@ function EntryList({
 }
 
 function EntryDetails({ entry, warnings, onBack, onEdit, onDelete }) {
+  const isComposed = isComposedDish(entry);
+  const combinations = isComposed ? buildCombinations(entry) : [];
+  const [drawnCombination, setDrawnCombination] = useState('');
+
+  useEffect(() => {
+    setDrawnCombination('');
+  }, [entry.id]);
+
+  function drawCombination() {
+    if (!combinations.length) {
+      return;
+    }
+
+    const index = Math.floor(Math.random() * combinations.length);
+    setDrawnCombination(combinations[index]);
+  }
+
   return (
     <main className="detail-view">
       <button className="ghost-button back-button" type="button" onClick={onBack}>
@@ -947,6 +984,11 @@ function EntryDetails({ entry, warnings, onBack, onEdit, onDelete }) {
       <article className="detail-card">
         <span className="entry-category">{entry.category}</span>
         <h1>{entry.name}</h1>
+        {entry.category === 'Duże dania' && (
+          <p className="type-note">
+            {isComposed ? 'Duże danie składane' : 'Duże danie zwykłe'}
+          </p>
+        )}
 
         {!!warnings.length && (
           <div className="warnings" role="note">
@@ -956,8 +998,24 @@ function EntryDetails({ entry, warnings, onBack, onEdit, onDelete }) {
           </div>
         )}
 
-        <DetailBlock title="Składniki" value={entry.ingredients} />
-        <DetailBlock title="Przepis / opis" value={entry.description} />
+        {isComposed ? (
+          <>
+            <DetailBlock title="Baza" value={entry.base} />
+            <DetailBlock title="Główny dodatek" value={entry.mainAddon} />
+            <DetailBlock title="Dodatek" value={entry.sideAddon} />
+            <DetailBlock title="Opis" value={entry.description} />
+            <CombinationSection
+              combinations={combinations}
+              drawnCombination={drawnCombination}
+              onDraw={drawCombination}
+            />
+          </>
+        ) : (
+          <>
+            <DetailBlock title="Składniki" value={entry.ingredients} />
+            <DetailBlock title="Przepis / opis" value={entry.description} />
+          </>
+        )}
         <DetailBlock title="Wariant dla Michała" value={entry.michalVariant} />
         <DetailBlock title="Wariant dla Blanki" value={entry.blankaVariant} />
 
@@ -979,6 +1037,39 @@ function EntryDetails({ entry, warnings, onBack, onEdit, onDelete }) {
   );
 }
 
+function CombinationSection({ combinations, drawnCombination, onDraw }) {
+  return (
+    <section className="detail-block combination-section">
+      <div className="combo-heading">
+        <h2>Kombinacje</h2>
+        <span>{combinations.length}</span>
+      </div>
+
+      {combinations.length ? (
+        <>
+          <button className="secondary-button" type="button" onClick={onDraw}>
+            Losuj kombinację
+          </button>
+
+          {drawnCombination && (
+            <p className="drawn-combo">{drawnCombination}</p>
+          )}
+
+          <div className="combination-grid">
+            {combinations.map((combination) => (
+              <span className="combo-chip" key={combination}>
+                {combination}
+              </span>
+            ))}
+          </div>
+        </>
+      ) : (
+        <p>Brak składników do kombinowania. To jeszcze bardziej koncept niż obiad.</p>
+      )}
+    </section>
+  );
+}
+
 function DetailBlock({ title, value }) {
   return (
     <section className="detail-block">
@@ -990,11 +1081,22 @@ function DetailBlock({ title, value }) {
 
 function EntryForm({ initialEntry, onSave, onCancel }) {
   const [formData, setFormData] = useState(initialEntry);
+  const isLargeDish = formData.category === 'Duże dania';
+  const isComposed = isLargeDish && formData.largeDishType === 'composed';
 
   function updateField(field, value) {
     setFormData((current) => ({
       ...current,
       [field]: value,
+    }));
+  }
+
+  function updateCategory(value) {
+    setFormData((current) => ({
+      ...current,
+      category: value,
+      largeDishType:
+        value === 'Duże dania' ? current.largeDishType || 'normal' : 'normal',
     }));
   }
 
@@ -1025,7 +1127,7 @@ function EntryForm({ initialEntry, onSave, onCancel }) {
           Kategoria
           <select
             value={formData.category}
-            onChange={(event) => updateField('category', event.target.value)}
+            onChange={(event) => updateCategory(event.target.value)}
           >
             {CATEGORY_NAMES.map((category) => (
               <option key={category} value={category}>
@@ -1035,23 +1137,86 @@ function EntryForm({ initialEntry, onSave, onCancel }) {
           </select>
         </label>
 
-        <label>
-          Składniki
-          <textarea
-            rows="4"
-            value={formData.ingredients}
-            onChange={(event) => updateField('ingredients', event.target.value)}
-          />
-        </label>
+        {isLargeDish && (
+          <label>
+            Typ dużego dania
+            <select
+              value={formData.largeDishType || 'normal'}
+              onChange={(event) =>
+                updateField('largeDishType', event.target.value)
+              }
+            >
+              {LARGE_DISH_TYPES.map((type) => (
+                <option key={type.value} value={type.value}>
+                  {type.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
-        <label>
-          Przepis / opis
-          <textarea
-            rows="5"
-            value={formData.description}
-            onChange={(event) => updateField('description', event.target.value)}
-          />
-        </label>
+        {isComposed ? (
+          <>
+            <label>
+              Baza
+              <textarea
+                rows="5"
+                value={formData.base}
+                onChange={(event) => updateField('base', event.target.value)}
+                placeholder="ziemniaki&#10;ziemniaki pieczone&#10;frytki"
+              />
+            </label>
+
+            <label>
+              Główny dodatek
+              <textarea
+                rows="5"
+                value={formData.mainAddon}
+                onChange={(event) => updateField('mainAddon', event.target.value)}
+                placeholder="jajko sadzone&#10;kotlety&#10;wege kotlet"
+              />
+            </label>
+
+            <label>
+              Dodatek
+              <textarea
+                rows="5"
+                value={formData.sideAddon}
+                onChange={(event) => updateField('sideAddon', event.target.value)}
+                placeholder="mizeria&#10;sałatka z pomidorów i cebuli&#10;ogórek kiszony"
+              />
+            </label>
+
+            <label>
+              Opis
+              <textarea
+                rows="4"
+                value={formData.description}
+                onChange={(event) => updateField('description', event.target.value)}
+              />
+            </label>
+          </>
+        ) : (
+          <>
+            <label>
+              Składniki
+              <textarea
+                rows="4"
+                value={formData.ingredients}
+                onChange={(event) => updateField('ingredients', event.target.value)}
+              />
+            </label>
+
+            <label>
+              Przepis / opis
+              <textarea
+                rows="5"
+                value={formData.description}
+                onChange={(event) => updateField('description', event.target.value)}
+              />
+            </label>
+          </>
+        )}
 
         <label>
           Wariant dla Michała

@@ -455,6 +455,16 @@ textarea:focus {
   overflow-wrap: anywhere;
 }
 
+.type-note {
+  width: fit-content;
+  margin-bottom: 0;
+  border-radius: 999px;
+  padding: 7px 11px;
+  background: rgba(82, 111, 159, 0.12);
+  color: var(--blue);
+  font-weight: 900;
+}
+
 .warnings {
   display: grid;
   gap: 8px;
@@ -483,6 +493,54 @@ textarea:focus {
   margin-bottom: 0;
   white-space: pre-wrap;
   line-height: 1.55;
+}
+
+.combination-section {
+  gap: 12px;
+}
+
+.combo-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.combo-heading h2 {
+  margin-bottom: 0;
+}
+
+.combo-heading span {
+  display: grid;
+  min-width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(247, 201, 72, 0.36);
+  color: #6b4b00;
+  font-weight: 900;
+}
+
+.drawn-combo {
+  border: 1px solid rgba(79, 139, 91, 0.28);
+  border-radius: 16px;
+  padding: 12px;
+  background: rgba(79, 139, 91, 0.12);
+  color: var(--green-dark);
+  font-weight: 900;
+}
+
+.combination-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.combo-chip {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: #ffffff;
+  line-height: 1.35;
 }
 
 .date-row {
@@ -596,6 +654,10 @@ textarea:focus {
   }
 
   .entry-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .combination-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
